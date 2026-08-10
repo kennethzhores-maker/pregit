@@ -23,6 +23,9 @@ export async function AppHeader({ user }: { user: AppUser }) {
             <Link href="/fixtures" className="hover:text-[var(--accent)]">
               Fixtures
             </Link>
+            <Link href="/simulation" className="hover:text-[var(--accent)]">
+              Simulation
+            </Link>
             <Link href="/following" className="hover:text-[var(--accent)]">
               Following
             </Link>

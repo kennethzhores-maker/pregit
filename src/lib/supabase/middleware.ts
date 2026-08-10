@@ -15,7 +15,8 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/accuracy") ||
     pathname.startsWith("/following") ||
     pathname.startsWith("/admin") ||
-    pathname.startsWith("/pricing");
+    pathname.startsWith("/pricing") ||
+    pathname.startsWith("/simulation");
 
   const demoSession = request.cookies.get(DEMO_COOKIE)?.value === "1";
   const demoAllowed = isDemoMode() && demoSession;
