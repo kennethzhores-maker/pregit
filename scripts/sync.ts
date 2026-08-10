@@ -2,7 +2,10 @@ async function main() {
   const { runSync } = await import("../src/lib/sync/run-sync");
   const jobArg = process.argv[2];
   const job =
-    jobArg === "hourly" || jobArg === "nightly" || jobArg === "seed"
+    jobArg === "hourly" ||
+    jobArg === "nightly" ||
+    jobArg === "seed" ||
+    jobArg === "squads"
       ? jobArg
       : "seed";
 

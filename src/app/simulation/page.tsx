@@ -20,8 +20,8 @@ export default async function SimulationPage() {
             Simulation
           </h1>
           <p className="mt-3 max-w-2xl text-[var(--muted)]">
-            Build two XIs from real squad stats, then watch a sped-up 90-minute
-            match with live score, feed, and final match stats.
+            Build two XIs from current squad lists and season stats, then watch a
+            sped-up 90-minute match with live score, feed, and final match stats.
           </p>
         </div>
 

@@ -10,6 +10,7 @@
     "db:seed": "tsx --env-file=.env.local scripts/sync.ts seed",
     "db:sync": "tsx --env-file=.env.local scripts/sync.ts hourly",
     "db:sync:nightly": "tsx --env-file=.env.local scripts/sync.ts nightly",
+    "db:sync:squads": "tsx --env-file=.env.local scripts/sync.ts squads",
     "predict:smoke": "tsx scripts/predict-smoke.ts"
   },
   "dependencies": {

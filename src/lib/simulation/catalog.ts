@@ -61,13 +61,16 @@ async function supabaseCatalog(): Promise<SimTeam[]> {
   const { data: teams, error: teamsError } = await supabase
     .from("teams")
     .select("id, name, short_name, venue")
+    .like("id", "api-team-%")
     .order("name");
 
   if (teamsError || !teams?.length) return [];
 
+  const teamIds = teams.map((t) => t.id);
   const { data: players } = await supabase
     .from("players")
-    .select("id, team_id, name, position, shirt_number, nationality");
+    .select("id, team_id, name, position, shirt_number, nationality")
+    .in("team_id", teamIds);
 
   if (!players?.length) return [];
 
@@ -97,7 +100,7 @@ async function supabaseCatalog(): Promise<SimTeam[]> {
       assists: Number(stats?.assists ?? 0),
       yellowCards: Number(stats?.yellow_cards ?? 0),
       redCards: Number(stats?.red_cards ?? 0),
-      rating: Number(stats?.rating ?? 6.5),
+      rating: Number(stats?.rating ?? 6.6),
     };
     const list = byTeam.get(player.team_id) ?? [];
     list.push(entry);
@@ -111,38 +114,27 @@ async function supabaseCatalog(): Promise<SimTeam[]> {
       shortName: team.short_name,
       venue: team.venue,
       players: (byTeam.get(team.id) ?? []).sort(
-        (a, b) => b.rating - a.rating,
+        (a, b) => b.rating - a.rating || b.goals - a.goals,
       ),
     }))
     .filter((team) => team.players.length >= 11);
 }
 
-/** Prefer DB squads with 11+ players; always fall back to curated seed pack. */
+/**
+ * Prefer live API squads in Supabase. Seed pack is only a fallback when
+ * no synced squads exist (avoids showing transferred players on old clubs).
+ */
 export async function getSimulationCatalog(): Promise<{
   teams: SimTeam[];
-  source: "supabase" | "seed" | "mixed";
+  source: "supabase" | "seed";
 }> {
-  const seeded = seedCatalog();
   const fromDb = await supabaseCatalog();
-
-  if (!fromDb.length) {
-    return { teams: seeded, source: "seed" };
+  if (fromDb.length >= 2) {
+    return {
+      teams: fromDb.sort((a, b) => a.name.localeCompare(b.name)),
+      source: "supabase",
+    };
   }
 
-  const merged = [...fromDb];
-  for (const team of seeded) {
-    if (!merged.some((t) => t.id === team.id)) merged.push(team);
-  }
-
-  const usable = merged.filter((t) => t.players.length >= 11);
-  if (!usable.length) return { teams: seeded, source: "seed" };
-
-  const seedIds = new Set(seeded.map((t) => t.id));
-  const hasSeed = usable.some((t) => seedIds.has(t.id));
-  const hasDbOnly = usable.some((t) => !seedIds.has(t.id));
-
-  return {
-    teams: usable.sort((a, b) => a.name.localeCompare(b.name)),
-    source: hasSeed && hasDbOnly ? "mixed" : hasDbOnly ? "supabase" : "seed",
-  };
+  return { teams: seedCatalog(), source: "seed" };
 }

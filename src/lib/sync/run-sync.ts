@@ -12,8 +12,12 @@ import {
   TEAM_STATS,
 } from "@/lib/data/seed";
 import { createServiceClient } from "@/lib/supabase/admin";
+import {
+  recordSquadSync,
+  syncPremierLeagueSquads,
+} from "@/lib/sync/sync-squads";
 
-export type SyncJob = "seed" | "hourly" | "nightly";
+export type SyncJob = "seed" | "hourly" | "nightly" | "squads";
 
 export type SyncResult = {
   job: SyncJob;
@@ -414,5 +418,21 @@ export async function runSync(job: SyncJob = "hourly"): Promise<SyncResult> {
   if (job === "seed") {
     return seedDatabase();
   }
+
+  if (job === "squads") {
+    const supabase = createServiceClient();
+    const squadResult = await syncPremierLeagueSquads();
+    if (supabase) {
+      await recordSquadSync(supabase, squadResult);
+    }
+    return {
+      job: "squads",
+      status: squadResult.status,
+      recordsUpserted: squadResult.players + squadResult.stats,
+      message: squadResult.message,
+      source: "api-football",
+    };
+  }
+
   return syncFromApiFootball(job);
 }
