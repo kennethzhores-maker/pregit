@@ -1,0 +1,34 @@
+-- Nightly full sync + hourly matchday refresh (Supabase Cron / pg_cron)
+-- Requires pg_net + a deployed app URL. Replace placeholders before enabling.
+
+-- Example: call Next.js sync endpoint every hour
+-- select cron.schedule(
+--   'pregit-hourly-sync',
+--   '0 * * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://YOUR_DOMAIN/api/sync',
+--     headers := jsonb_build_object(
+--       'Content-Type', 'application/json',
+--       'Authorization', 'Bearer YOUR_CRON_SECRET'
+--     ),
+--     body := jsonb_build_object('job', 'hourly')
+--   );
+--   $$
+-- );
+
+-- Example: fuller nightly sync at 03:15 UTC
+-- select cron.schedule(
+--   'pregit-nightly-sync',
+--   '15 3 * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://YOUR_DOMAIN/api/sync',
+--     headers := jsonb_build_object(
+--       'Content-Type', 'application/json',
+--       'Authorization', 'Bearer YOUR_CRON_SECRET'
+--     ),
+--     body := jsonb_build_object('job', 'nightly')
+--   );
+--   $$
+-- );

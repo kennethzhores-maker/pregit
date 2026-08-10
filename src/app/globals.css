@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --background: #07140f;
+  --foreground: #e8f0ea;
+  --panel: #0d1f18;
+  --panel-hover: #12261d;
+  --line: #1e3a2d;
+  --muted: #8fa396;
+  --pitch: #2f9e62;
+  --pitch-ink: #04140c;
+  --accent: #d6b35c;
+  --glow: rgba(47, 158, 98, 0.18);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+}
+
+body {
+  background:
+    radial-gradient(1200px 500px at 10% -10%, var(--glow), transparent 55%),
+    radial-gradient(900px 400px at 90% 0%, rgba(214, 179, 92, 0.08), transparent 45%),
+    linear-gradient(180deg, #0a1a13 0%, var(--background) 40%, #050d09 100%);
+  color: var(--foreground);
+  font-family: var(--font-body), system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--pitch) 45%, transparent);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes grow-x {
+  from {
+    transform: scaleX(0.35);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.form-pip {
+  animation: rise-in 420ms ease both;
+}
+
+.insight-row {
+  animation: rise-in 500ms ease both;
+}
+
+.stat-bar {
+  transform-origin: left center;
+  animation: grow-x 700ms ease both;
+}
+
