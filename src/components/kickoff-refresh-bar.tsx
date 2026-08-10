@@ -71,7 +71,8 @@ export function KickoffRefreshBar({
             Pre-kickoff refresh
           </div>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Pull latest XIs & injuries before predicting. Current:{" "}
+            Within 6h of kickoff we re-check official XIs & injuries before you
+            predict. Current:{" "}
             <span className="text-[var(--foreground)]">
               {status} · {homeCount}/{awayCount} starters
             </span>

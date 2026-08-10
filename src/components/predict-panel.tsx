@@ -117,7 +117,8 @@ export function PredictPanel({
             Prediction
           </h2>
           <p className="mt-2 max-w-xl text-sm text-[var(--muted)]">
-            Probabilities and a most-likely score — not a guaranteed exact score.
+            Ensemble of poisson + XI Monte Carlo (20k–25k runs) with history
+            calibration. Near kickoff we refresh official XIs when published.
           </p>
           {usage ? (
             <p className="mt-2 text-xs text-[var(--muted)]">

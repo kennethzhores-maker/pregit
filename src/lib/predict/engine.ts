@@ -4,6 +4,10 @@ import {
   applyConfidenceGate,
   buildTrustExplanations,
 } from "@/lib/predict/explanations";
+import {
+  applyResultCalibration,
+  buildHistoryCalibration,
+} from "@/lib/predict/calibration";
 import { calibrateMarkets } from "@/lib/predict/markets";
 import {
   aggregateResult,
@@ -15,6 +19,7 @@ import {
   runMatchSimulations,
 } from "@/lib/predict/simulate";
 import {
+  CONFIRMED_SIM_ITERATIONS,
   DEFAULT_SIM_ITERATIONS,
   MODEL_VERSION,
   POISSON_WEIGHT,
@@ -28,6 +33,7 @@ function confidenceFrom(
   ensemble: { homeWinPct: number; awayWinPct: number },
   poisson: MethodBreakdown,
   sim: { homeWinPct: number; awayWinPct: number },
+  historySample: number,
 ) {
   let score = 60;
   score += features.lineup_confirmed * 16;
@@ -39,8 +45,9 @@ function confidenceFrom(
   score -=
     (features.home_injury_attack_pen + features.away_injury_attack_pen) * 12;
   score -= features.congestion_home * 2 + features.congestion_away * 2;
+  score += Math.min(4, historySample * 0.15);
 
-  return Math.round(Math.min(93, Math.max(45, score)));
+  return Math.round(Math.min(94, Math.max(45, score)));
 }
 
 function mergeTopScorelines(
@@ -70,12 +77,27 @@ function mergeTopScorelines(
     .slice(0, 5);
 }
 
+function resolveIterations(
+  match: MatchDetail,
+  requested?: number,
+): number {
+  if (requested != null) return requested;
+  const hours =
+    (new Date(match.kickoff).getTime() - Date.now()) / (1000 * 60 * 60);
+  if (match.lineupStatus === "confirmed" && hours <= 6) {
+    return CONFIRMED_SIM_ITERATIONS;
+  }
+  return DEFAULT_SIM_ITERATIONS;
+}
+
 export function predictMatch(
   match: MatchDetail,
   source: PredictionResult["source"] = "local",
-  iterations = DEFAULT_SIM_ITERATIONS,
+  iterations?: number,
 ): PredictionResult {
   const features = buildFeatures(match);
+  const history = buildHistoryCalibration();
+  const runs = resolveIterations(match, iterations);
 
   const { home, away } = expectedGoalsFromFeatures(features);
   const poissonLines = scoreMatrix(home, away, 6, -0.08);
@@ -95,8 +117,15 @@ export function predictMatch(
     topScorelines: poissonTop,
   };
 
-  const simulation = runMatchSimulations(match, features, iterations);
-  const blended = blendPercents(poisson, simulation, SIM_WEIGHT);
+  const simulation = runMatchSimulations(match, features, runs);
+  const blendedRaw = blendPercents(poisson, simulation, SIM_WEIGHT);
+  const blended = applyResultCalibration(
+    blendedRaw.homeWinPct,
+    blendedRaw.drawPct,
+    blendedRaw.awayWinPct,
+    history,
+  );
+
   const topScorelines = mergeTopScorelines(
     poisson.topScorelines,
     simulation.topScorelines,
@@ -121,9 +150,16 @@ export function predictMatch(
     poissonLines,
     simulation.bttsPct,
     simulation.over25Pct,
+    history,
   );
 
-  const rawConfidence = confidenceFrom(features, blended, poisson, simulation);
+  const rawConfidence = confidenceFrom(
+    features,
+    blended,
+    poisson,
+    simulation,
+    history.sampleSize,
+  );
   const gated = applyConfidenceGate(rawConfidence, match.lineupStatus);
 
   const prediction: PredictionResult = {
@@ -158,6 +194,11 @@ export function predictMatch(
     markets,
   };
 
-  prediction.reasons = buildTrustExplanations(match, prediction);
+  prediction.reasons = [
+    history.note,
+    `Monte Carlo runs: ${runs.toLocaleString()}.`,
+    ...buildTrustExplanations(match, prediction),
+  ].slice(0, 8);
+
   return prediction;
 }

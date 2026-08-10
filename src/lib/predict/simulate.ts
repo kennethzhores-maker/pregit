@@ -145,7 +145,7 @@ function simulateOne(
 export function runMatchSimulations(
   match: MatchDetail,
   features: PredictFeatures,
-  iterations = 10000,
+  iterations = 20000,
 ): SimulationResult {
   const homeUnits = rateSideUnits(match, "home", features);
   const awayUnits = rateSideUnits(match, "away", features);

@@ -16,6 +16,7 @@ import {
   recordSquadSync,
   syncPremierLeagueSquads,
 } from "@/lib/sync/sync-squads";
+import { syncPremierLeagueTeamStats } from "@/lib/sync/sync-team-stats";
 
 export type SyncJob = "seed" | "hourly" | "nightly" | "squads";
 
@@ -421,15 +422,25 @@ export async function runSync(job: SyncJob = "hourly"): Promise<SyncResult> {
 
   if (job === "squads") {
     const supabase = createServiceClient();
+    const teamStats = await syncPremierLeagueTeamStats();
     const squadResult = await syncPremierLeagueSquads();
     if (supabase) {
-      await recordSquadSync(supabase, squadResult);
+      await recordSquadSync(supabase, {
+        ...squadResult,
+        message: `${teamStats.message} ${squadResult.message}`,
+      });
     }
     return {
       job: "squads",
-      status: squadResult.status,
-      recordsUpserted: squadResult.players + squadResult.stats,
-      message: squadResult.message,
+      status:
+        squadResult.status === "failed" || teamStats.status === "failed"
+          ? "failed"
+          : squadResult.status === "skipped" && teamStats.status === "skipped"
+            ? "skipped"
+            : "success",
+      recordsUpserted:
+        squadResult.players + squadResult.stats + teamStats.teams,
+      message: `${teamStats.message} ${squadResult.message}`,
       source: "api-football",
     };
   }
