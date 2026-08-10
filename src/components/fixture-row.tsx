@@ -85,7 +85,7 @@ export function FixtureRow({
         <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
           {statusLabel[fixture.status]}
         </div>
-        {fixture.lineupStatus ? (
+        {fixture.lineupStatus && fixture.status !== "finished" ? (
           <div className="mt-1 text-[10px] tracking-[0.08em] text-[var(--accent)]">
             {lineupLabel[fixture.lineupStatus]}
           </div>
