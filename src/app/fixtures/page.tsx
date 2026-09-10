@@ -47,6 +47,7 @@ function sanitizeFixture(fixture: FixtureListItem): FixtureListItem {
 
 function inBoardWindow(fixture: FixtureListItem, now = Date.now()) {
   const hours = hoursUntilKickoff(fixture.kickoff, now);
+  if (!Number.isFinite(hours)) return fixture.status === "scheduled";
   const days = hours / 24;
   if (fixture.status === "finished") {
     return days >= -RECENT_RESULTS_MAX_AGE_DAYS;
@@ -54,12 +55,33 @@ function inBoardWindow(fixture: FixtureListItem, now = Date.now()) {
   return days >= -0.5 && days <= UPCOMING_HORIZON_DAYS;
 }
 
+function hasOpenFixture(fixtures: FixtureListItem[]) {
+  return fixtures.some(
+    (f) =>
+      f.status === "scheduled" ||
+      f.status === "lineups" ||
+      f.status === "live",
+  );
+}
+
 export default async function FixturesPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { fixtures: rawFixtures, source } = await listFixtures();
-  const fixtures = rawFixtures.map(sanitizeFixture).filter(inBoardWindow);
+  const listed = await listFixtures();
+  let source = listed.source;
+  let fixtures = listed.fixtures.map(sanitizeFixture).filter(inBoardWindow);
+
+  // Guarantee a September board even if production DB is empty/stale
+  if (!hasOpenFixture(fixtures)) {
+    const { listSeedFixtures } = await import("@/lib/data/seed");
+    const seed = listSeedFixtures().map(sanitizeFixture).filter(inBoardWindow);
+    if (hasOpenFixture(seed)) {
+      fixtures = seed;
+      source = "seed";
+    }
+  }
+
   const followedTeamIds = await getFollowedTeamIds(user.id);
   const followedSet = new Set(followedTeamIds);
 
@@ -136,21 +158,20 @@ export default async function FixturesPage() {
 
         {!hasOpenMatches ? (
           <div className="mb-8 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/5 px-4 py-4 text-sm text-[var(--muted)]">
-            No upcoming fixtures in the database yet. Add a free{" "}
-            <code className="text-[var(--foreground)]">FOOTBALL_DATA_TOKEN</code>{" "}
-            from{" "}
-            <a
-              className="text-[var(--foreground)] underline"
-              href="https://www.football-data.org/client/register"
-              target="_blank"
-              rel="noreferrer"
-            >
-              football-data.org
-            </a>
-            , keep{" "}
-            <code className="text-[var(--foreground)]">FOOTBALL_SEASON=2026</code>,
-            then run <code className="text-[var(--foreground)]">npm run db:sync</code>{" "}
-            (or nightly) for live 2026/27 matchweeks and standings.
+            No upcoming fixtures loaded. In Vercel → Settings → Environment
+            Variables, set{" "}
+            <code className="text-[var(--foreground)]">FOOTBALL_DATA_TOKEN</code>,{" "}
+            <code className="text-[var(--foreground)]">FOOTBALL_SEASON=2026</code>, and{" "}
+            <code className="text-[var(--foreground)]">CRON_SECRET</code>, redeploy,
+            then open{" "}
+            <code className="text-[var(--foreground)]">
+              /api/sync?job=nightly
+            </code>{" "}
+            with header{" "}
+            <code className="text-[var(--foreground)]">
+              Authorization: Bearer &lt;CRON_SECRET&gt;
+            </code>
+            .
           </div>
         ) : null}
 

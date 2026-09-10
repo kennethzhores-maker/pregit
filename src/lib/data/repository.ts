@@ -51,13 +51,18 @@ export async function listFixtures(): Promise<{
   fixtures: FixtureListItem[];
   source: "supabase" | "seed";
 }> {
+  const seedBoard = () => ({
+    fixtures: listSeedFixtures(),
+    source: "seed" as const,
+  });
+
   if (!canUseSupabaseData()) {
-    return { fixtures: listSeedFixtures(), source: "seed" };
+    return seedBoard();
   }
 
   const supabase = await createClient();
   if (!supabase) {
-    return { fixtures: listSeedFixtures(), source: "seed" };
+    return seedBoard();
   }
 
   // Prefer fixtures from the current matchboard window (recent + upcoming),
@@ -87,10 +92,23 @@ export async function listFixtures(): Promise<{
     .order("kickoff", { ascending: true });
 
   if (error || !fixtures?.length) {
-    return { fixtures: listSeedFixtures(), source: "seed" };
+    return seedBoard();
   }
 
-  return mapFixtureList(fixtures);
+  const mapped = await mapFixtureList(fixtures);
+  const hasOpen = mapped.fixtures.some(
+    (f) =>
+      f.status === "scheduled" ||
+      f.status === "lineups" ||
+      f.status === "live",
+  );
+
+  // Production DB may still only have finished/historical rows — show seed MW board.
+  if (!hasOpen) {
+    return seedBoard();
+  }
+
+  return mapped;
 }
 
 async function mapFixtureList(
