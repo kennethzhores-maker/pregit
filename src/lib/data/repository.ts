@@ -6,6 +6,7 @@ import {
 } from "@/lib/sync/pre-kickoff";
 import { getConfiguredFootballSeason } from "@/lib/football/season";
 import { resolveTeamStatsForPredict } from "@/lib/football/team-strength-priors";
+import { ensureLiveFixturesSynced } from "@/lib/sync/ensure-live-fixtures";
 import type {
   FixtureListItem,
   FixtureStatus,
@@ -92,6 +93,31 @@ export async function listFixtures(): Promise<{
     .order("kickoff", { ascending: true });
 
   if (error || !fixtures?.length) {
+    const synced = await ensureLiveFixturesSynced();
+    if (synced.ran) {
+      const { data: refreshed } = await supabase
+        .from("fixtures")
+        .select(
+          `
+      id,
+      kickoff,
+      venue,
+      status,
+      home_score,
+      away_score,
+      competition:competitions(name),
+      home:teams!fixtures_home_team_id_fkey(id, name, short_name),
+      away:teams!fixtures_away_team_id_fkey(id, name, short_name)
+    `,
+        )
+        .gte("kickoff", from.toISOString())
+        .lte("kickoff", to.toISOString())
+        .order("kickoff", { ascending: true });
+
+      if (refreshed?.length) {
+        return mapFixtureList(refreshed);
+      }
+    }
     return seedBoard();
   }
 
@@ -103,8 +129,39 @@ export async function listFixtures(): Promise<{
       f.status === "live",
   );
 
-  // Production DB may still only have finished/historical rows — show seed MW board.
   if (!hasOpen) {
+    const synced = await ensureLiveFixturesSynced();
+    if (synced.ran) {
+      const { data: refreshed } = await supabase
+        .from("fixtures")
+        .select(
+          `
+      id,
+      kickoff,
+      venue,
+      status,
+      home_score,
+      away_score,
+      competition:competitions(name),
+      home:teams!fixtures_home_team_id_fkey(id, name, short_name),
+      away:teams!fixtures_away_team_id_fkey(id, name, short_name)
+    `,
+        )
+        .gte("kickoff", from.toISOString())
+        .lte("kickoff", to.toISOString())
+        .order("kickoff", { ascending: true });
+
+      if (refreshed?.length) {
+        const remapped = await mapFixtureList(refreshed);
+        const remappedOpen = remapped.fixtures.some(
+          (f) =>
+            f.status === "scheduled" ||
+            f.status === "lineups" ||
+            f.status === "live",
+        );
+        if (remappedOpen) return remapped;
+      }
+    }
     return seedBoard();
   }
 
