@@ -6,7 +6,7 @@ import type {
   MatchDetail,
   PlayerPosition,
 } from "@/lib/data/types";
-import { parseForm, resolveLineupStatus } from "@/lib/data/types";
+import { resolveLineupStatus } from "@/lib/data/types";
 import {
   FIXTURES,
   INJURIES,
@@ -15,6 +15,8 @@ import {
   PLAYER_STATS,
   getSeedMatchDetail,
 } from "@/lib/data/seed";
+import { getConfiguredFootballSeason } from "@/lib/football/season";
+import { resolveTeamStatsForPredict } from "@/lib/football/team-strength-priors";
 import { createServiceClient } from "@/lib/supabase/admin";
 
 export type RefreshSource = "seed" | "api-football" | "cache" | "squad";
@@ -248,7 +250,7 @@ async function refreshInjuriesFromApi(
   for (const teamExt of [homeTeamExternalId, awayTeamExternalId]) {
     try {
       const response = await fetch(
-        `https://v3.football.api-sports.io/injuries?team=${teamExt}&season=${process.env.FOOTBALL_SEASON ?? "2024"}`,
+        `https://v3.football.api-sports.io/injuries?team=${teamExt}&season=${getConfiguredFootballSeason()}`,
         {
           headers: { "x-apisports-key": apiKey },
           cache: "no-store",
@@ -290,7 +292,8 @@ async function refreshFromApiFootball(
   awayTeamId: string,
 ): Promise<RefreshOverlay | null> {
   const apiKey = process.env.FOOTBALL_API_KEY;
-  if (!apiKey || !externalId) return null;
+  // football-data.org fixture ids are not valid for API-Football lineups
+  if (!apiKey || !externalId || fixtureId.startsWith("fd-fx-")) return null;
 
   try {
     const response = await fetch(
@@ -624,33 +627,41 @@ async function loadMatchBase(fixtureId: string): Promise<MatchDetail | null> {
 
   const homeLineup = mapLineup(fixture.home_team_id);
   const awayLineup = mapLineup(fixture.away_team_id);
-  const homeStat = (teamStats ?? []).find(
-    (s) => s.team_id === fixture.home_team_id,
+  const preferredSeason = getConfiguredFootballSeason();
+  const resolved = resolveTeamStatsForPredict(
+    fixture.home_team_id,
+    (teamStats ?? []) as Array<{
+      team_id: string;
+      season: number;
+      played: number;
+      wins: number;
+      draws: number;
+      losses: number;
+      goals_for: number;
+      goals_against: number;
+      form: string | null;
+      home_form?: string | null;
+      away_form?: string | null;
+    }>,
+    preferredSeason,
   );
-  const awayStat = (teamStats ?? []).find(
-    (s) => s.team_id === fixture.away_team_id,
+  const resolvedAway = resolveTeamStatsForPredict(
+    fixture.away_team_id,
+    (teamStats ?? []) as Array<{
+      team_id: string;
+      season: number;
+      played: number;
+      wins: number;
+      draws: number;
+      losses: number;
+      goals_for: number;
+      goals_against: number;
+      form: string | null;
+      home_form?: string | null;
+      away_form?: string | null;
+    }>,
+    preferredSeason,
   );
-
-  const mapStats = (
-    row: (typeof teamStats extends (infer T)[] | null ? T : never) | undefined,
-    teamId: string,
-  ) => {
-    if (!row) return null;
-    const form = parseForm(row.form as string | null);
-    return {
-      teamId,
-      season: Number(row.season),
-      played: Number(row.played),
-      wins: Number(row.wins),
-      draws: Number(row.draws),
-      losses: Number(row.losses),
-      goalsFor: Number(row.goals_for),
-      goalsAgainst: Number(row.goals_against),
-      form,
-      homeForm: form,
-      awayForm: form,
-    };
-  };
 
   return {
     id: fixture.id,
@@ -662,13 +673,13 @@ async function loadMatchBase(fixtureId: string): Promise<MatchDetail | null> {
       id: home.id,
       name: home.name,
       shortName: home.short_name,
-      form: mapStats(homeStat, home.id)?.form ?? [],
+      form: resolved.stats.form,
     },
     away: {
       id: away.id,
       name: away.name,
       shortName: away.short_name,
-      form: mapStats(awayStat, away.id)?.form ?? [],
+      form: resolvedAway.stats.form,
     },
     homeScore: fixture.home_score,
     awayScore: fixture.away_score,
@@ -688,8 +699,8 @@ async function loadMatchBase(fixtureId: string): Promise<MatchDetail | null> {
         isActive: Boolean(row.is_active),
       };
     }),
-    homeStats: mapStats(homeStat, home.id),
-    awayStats: mapStats(awayStat, away.id),
+    homeStats: resolved.stats,
+    awayStats: resolvedAway.stats,
     headToHead: [],
     lineupStatus: resolveLineupStatus(
       fixture.status as FixtureStatus,

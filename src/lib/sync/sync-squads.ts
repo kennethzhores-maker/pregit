@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  footballSeasonCandidates,
+  getConfiguredFootballSeason,
+  isSeasonPlanError,
+} from "@/lib/football/season";
 import { createServiceClient } from "@/lib/supabase/admin";
 
 type ApiTeam = {
@@ -116,7 +121,7 @@ export async function syncPremierLeagueSquads(): Promise<SquadSyncResult> {
   const supabase = createServiceClient();
   const apiKey = process.env.FOOTBALL_API_KEY;
   const leagueId = process.env.FOOTBALL_LEAGUE_ID ?? "39";
-  const season = process.env.FOOTBALL_SEASON ?? "2024";
+  const preferred = getConfiguredFootballSeason();
 
   if (!supabase) {
     return {
@@ -138,6 +143,47 @@ export async function syncPremierLeagueSquads(): Promise<SquadSyncResult> {
   }
 
   try {
+    let season = preferred;
+    let apiTeams: ApiTeam[] = [];
+    const notes: string[] = [];
+
+    for (const candidate of footballSeasonCandidates()) {
+      const teamsPayload = await apiGet<ApiTeam>("/teams", apiKey, {
+        league: leagueId,
+        season: String(candidate),
+      });
+      if (isSeasonPlanError(teamsPayload.errors)) {
+        notes.push(`Season ${candidate} blocked by API plan.`);
+        continue;
+      }
+      if (hasErrors(teamsPayload.errors)) {
+        notes.push(`Season ${candidate}: ${JSON.stringify(teamsPayload.errors)}`);
+        continue;
+      }
+      if (teamsPayload.response?.length) {
+        apiTeams = teamsPayload.response;
+        season = candidate;
+        if (candidate !== preferred) {
+          notes.push(
+            `Preferred season ${preferred} unavailable; synced ${candidate}.`,
+          );
+        }
+        break;
+      }
+    }
+
+    if (!apiTeams.length) {
+      return {
+        status: "failed",
+        teams: 0,
+        players: 0,
+        stats: 0,
+        message:
+          notes.join(" ") ||
+          `No teams for seasons ${footballSeasonCandidates().join(", ")}.`,
+      };
+    }
+
     await supabase.from("competitions").upsert({
       id: "pl",
       external_id: leagueId,
@@ -145,17 +191,6 @@ export async function syncPremierLeagueSquads(): Promise<SquadSyncResult> {
       country: "England",
       season: Number(season),
     });
-
-    const teamsPayload = await apiGet<ApiTeam>(
-      "/teams",
-      apiKey,
-      { league: leagueId, season },
-    );
-    if (hasErrors(teamsPayload.errors)) {
-      throw new Error(`Teams error: ${JSON.stringify(teamsPayload.errors)}`);
-    }
-
-    const apiTeams = teamsPayload.response ?? [];
     let playerCount = 0;
     let statsCount = 0;
 
@@ -230,7 +265,7 @@ export async function syncPremierLeagueSquads(): Promise<SquadSyncResult> {
           apiKey,
           {
             team: String(row.team.id),
-            season,
+            season: String(season),
             page: String(page),
           },
         );
@@ -286,7 +321,9 @@ export async function syncPremierLeagueSquads(): Promise<SquadSyncResult> {
       teams: apiTeams.length,
       players: playerCount,
       stats: statsCount,
-      message: `Synced ${apiTeams.length} PL squads (${playerCount} players, ${statsCount} stat rows) for season ${season}.`,
+      message: `Synced ${apiTeams.length} PL squads (${playerCount} players, ${statsCount} stat rows) for season ${season}.${
+        notes.length ? ` ${notes.join(" ")}` : ""
+      }`,
     };
   } catch (error) {
     return {

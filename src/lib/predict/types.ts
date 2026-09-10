@@ -204,10 +204,13 @@ export type SimulationBreakdown = MethodBreakdown & {
 export const MODEL_VERSION = "ensemble-sim-v3";
 /** Base Monte Carlo runs; confirmed near-kickoff predicts use the boost. */
 export const DEFAULT_SIM_ITERATIONS = Number(
-  process.env.PREDICT_SIM_ITERATIONS ?? 20000,
+  process.env.PREDICT_SIM_ITERATIONS ?? 4000,
 );
 export const CONFIRMED_SIM_ITERATIONS = Number(
-  process.env.PREDICT_SIM_ITERATIONS_CONFIRMED ?? 25000,
+  process.env.PREDICT_SIM_ITERATIONS_CONFIRMED ?? 8000,
+);
+export const FREE_SIM_ITERATIONS = Number(
+  process.env.PREDICT_SIM_ITERATIONS_FREE ?? 2500,
 );
 export const SIM_WEIGHT = 0.52;
 export const POISSON_WEIGHT = 0.48;

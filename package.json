@@ -11,6 +11,8 @@
     "db:sync": "tsx --env-file=.env.local scripts/sync.ts hourly",
     "db:sync:nightly": "tsx --env-file=.env.local scripts/sync.ts nightly",
     "db:sync:squads": "tsx --env-file=.env.local scripts/sync.ts squads",
+    "db:sync:fd": "tsx --env-file=.env.local scripts/sync.ts nightly",
+    "db:fixtures:current": "tsx --env-file=.env.local scripts/push-current-fixtures.ts",
     "predict:smoke": "tsx scripts/predict-smoke.ts"
   },
   "dependencies": {

@@ -75,6 +75,16 @@ export function buildTrustExplanations(
     );
   }
 
+  if (match.homeStats?.season != null && match.homeStats.season >= 2025) {
+    reasons.push(
+      `Using live ${match.homeStats.season}/${String(match.homeStats.season + 1).slice(-2)} club rates (GF ${f.home_gf_pg.toFixed(2)} / ${f.away_gf_pg.toFixed(2)} per game).`,
+    );
+  } else if (match.homeStats?.season === 2024 || match.awayStats?.season === 2024) {
+    reasons.push(
+      `Club strength uses 2024/25 season rates until live standings sync (set FOOTBALL_DATA_TOKEN).`,
+    );
+  }
+
   if (match.lineupStatus !== "confirmed") {
     reasons.push(
       `Lineups are ${match.lineupStatus} — treat confidence as provisional until official XI lock.`,

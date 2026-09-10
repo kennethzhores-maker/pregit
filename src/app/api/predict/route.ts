@@ -180,8 +180,13 @@ export async function POST(request: Request) {
   let match;
   let refresh: MatchRefreshResult | null = null;
 
+  // Free: skip live refresh by default (much faster). Pro refreshes near kickoff.
+  const preferSkipRefresh =
+    body.skipRefresh === true ||
+    (plan.plan === "free" && body.skipRefresh !== false);
+
   try {
-    if (body.skipRefresh) {
+    if (preferSkipRefresh) {
       const { getMatchDetail } = await import("@/lib/data/repository");
       match = await getMatchDetail(body.fixtureId);
       if (!match) {
@@ -201,8 +206,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Fixture not found" }, { status: 404 });
   }
 
-  const local = predictMatch(match, "local");
-  const remote = await predictViaAiEngine(local.features, match.id);
+  const {
+    CONFIRMED_SIM_ITERATIONS,
+    DEFAULT_SIM_ITERATIONS,
+    FREE_SIM_ITERATIONS,
+  } = await import("@/lib/predict/types");
+
+  const hours =
+    (new Date(match.kickoff).getTime() - Date.now()) / (1000 * 60 * 60);
+  const iterations =
+    plan.plan === "free"
+      ? FREE_SIM_ITERATIONS
+      : match.lineupStatus === "confirmed" && hours <= 6
+        ? CONFIRMED_SIM_ITERATIONS
+        : DEFAULT_SIM_ITERATIONS;
+
+  const local = predictMatch(match, "local", iterations);
+  const remote =
+    plan.plan === "pro"
+      ? await predictViaAiEngine(local.features, match.id)
+      : null;
   const full: PredictionResult = remote
     ? {
         ...local,
@@ -235,7 +258,9 @@ export async function POST(request: Request) {
     ].slice(0, 8);
   }
 
-  full.timeline = buildMatchTimeline(match, full);
+  if (plan.timeline) {
+    full.timeline = buildMatchTimeline(match, full);
+  }
 
   // Persist full fidelity before Free gating
   await persistPrediction(full, user.id);

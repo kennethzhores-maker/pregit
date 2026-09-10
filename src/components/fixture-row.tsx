@@ -44,12 +44,15 @@ function FormPips({ form }: { form: FixtureListItem["home"]["form"] }) {
 
 export function FixtureRow({
   fixture,
-  followedTeamIds = [],
+  followedTeamIds,
 }: {
   fixture: FixtureListItem;
-  followedTeamIds?: string[];
+  followedTeamIds?: string[] | Set<string>;
 }) {
-  const followed = new Set(followedTeamIds);
+  const followed =
+    followedTeamIds instanceof Set
+      ? followedTeamIds
+      : new Set(followedTeamIds ?? []);
   const homeFollowed = followed.has(fixture.home.id);
   const awayFollowed = followed.has(fixture.away.id);
   const isFollowed = homeFollowed || awayFollowed;

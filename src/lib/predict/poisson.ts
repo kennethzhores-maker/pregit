@@ -80,9 +80,9 @@ export function expectedGoalsFromFeatures(features: PredictFeatures): {
   home *= 1 + ppgDiff * 0.035;
   away *= 1 - ppgDiff * 0.03;
 
-  // Mild mean-reversion so scorelines stay realistic
-  home = home * 0.88 + 1.25 * 0.12;
-  away = away * 0.88 + 1.15 * 0.12;
+  // Lighter mean-reversion so club strength differences stay visible
+  home = home * 0.92 + 1.35 * 0.08;
+  away = away * 0.92 + 1.2 * 0.08;
 
   return {
     home: clampLambda(home),

@@ -1,5 +1,12 @@
-import type { Injury, LineupEntry, MatchDetail, FormResult } from "@/lib/data/types";
+import type {
+  Injury,
+  LineupEntry,
+  MatchDetail,
+  FormResult,
+  TeamStats,
+} from "@/lib/data/types";
 import { FIXTURES } from "@/lib/data/seed";
+import { priorToTeamStats } from "@/lib/football/team-strength-priors";
 import type { PredictFeatures } from "@/lib/predict/types";
 
 function formPoints(form: FormResult[]): number {
@@ -120,20 +127,44 @@ function injuryPenalties(
   };
 }
 
+function usableStats(stats: TeamStats | null | undefined, teamId: string): TeamStats {
+  // Missing / zero-game rows collapse every match to the same λ — use club priors.
+  if (!stats || stats.played <= 0) {
+    return priorToTeamStats(teamId) ?? {
+      teamId,
+      season: 2024,
+      played: 38,
+      wins: 12,
+      draws: 10,
+      losses: 16,
+      goalsFor: 50,
+      goalsAgainst: 55,
+      form: [],
+      homeForm: [],
+      awayForm: [],
+    };
+  }
+  // Guard against divide-by-played=1 with GF/GA=0 (early-season zero standings)
+  if (stats.goalsFor === 0 && stats.goalsAgainst === 0 && stats.played < 3) {
+    return priorToTeamStats(teamId) ?? stats;
+  }
+  return stats;
+}
+
 export function buildFeatures(match: MatchDetail): PredictFeatures {
-  const home = match.homeStats;
-  const away = match.awayStats;
+  const home = usableStats(match.homeStats, match.home.id);
+  const away = usableStats(match.awayStats, match.away.id);
 
-  const homePlayed = Math.max(home?.played ?? 0, 1);
-  const awayPlayed = Math.max(away?.played ?? 0, 1);
+  const homePlayed = Math.max(home.played, 1);
+  const awayPlayed = Math.max(away.played, 1);
 
-  const homePpg = home ? (home.wins * 3 + home.draws) / homePlayed : 1.2;
-  const awayPpg = away ? (away.wins * 3 + away.draws) / awayPlayed : 1.2;
+  const homePpg = (home.wins * 3 + home.draws) / homePlayed;
+  const awayPpg = (away.wins * 3 + away.draws) / awayPlayed;
 
-  const homeGf = home ? home.goalsFor / homePlayed : 1.3;
-  const awayGf = away ? away.goalsFor / awayPlayed : 1.3;
-  const homeGa = home ? home.goalsAgainst / homePlayed : 1.2;
-  const awayGa = away ? away.goalsAgainst / awayPlayed : 1.2;
+  const homeGf = home.goalsFor / homePlayed;
+  const awayGf = away.goalsFor / awayPlayed;
+  const homeGa = home.goalsAgainst / homePlayed;
+  const awayGa = away.goalsAgainst / awayPlayed;
 
   const homeXi = weightedXiRating(match.homeLineup);
   const awayXi = weightedXiRating(match.awayLineup);
@@ -220,12 +251,12 @@ export function buildFeatures(match: MatchDetail): PredictFeatures {
     away_ga_pg: Number(awayGa.toFixed(3)),
     home_gd_pg: Number((homeGf - homeGa).toFixed(3)),
     away_gd_pg: Number((awayGf - awayGa).toFixed(3)),
-    home_form_pts: formPoints((home?.form ?? match.home.form).slice(-5)),
-    away_form_pts: formPoints((away?.form ?? match.away.form).slice(-5)),
-    home_home_form_pts: formPoints((home?.homeForm ?? []).slice(-5)),
-    away_away_form_pts: formPoints((away?.awayForm ?? []).slice(-5)),
-    home_win_rate: home ? home.wins / homePlayed : 0.35,
-    away_win_rate: away ? away.wins / awayPlayed : 0.35,
+    home_form_pts: formPoints((home.form.length ? home.form : match.home.form).slice(-5)),
+    away_form_pts: formPoints((away.form.length ? away.form : match.away.form).slice(-5)),
+    home_home_form_pts: formPoints((home.homeForm ?? []).slice(-5)),
+    away_away_form_pts: formPoints((away.awayForm ?? []).slice(-5)),
+    home_win_rate: home.wins / homePlayed,
+    away_win_rate: away.wins / awayPlayed,
     home_xi_rating: Number(homeXi.toFixed(3)),
     away_xi_rating: Number(awayXi.toFixed(3)),
     xi_rating_diff: Number((homeXi - awayXi).toFixed(3)),

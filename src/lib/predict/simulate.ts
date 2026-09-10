@@ -1,5 +1,6 @@
 import type { MatchDetail } from "@/lib/data/types";
 import type { PredictFeatures, ScorelineProbability } from "@/lib/predict/types";
+import { DEFAULT_SIM_ITERATIONS } from "@/lib/predict/types";
 
 export type SideUnits = {
   attack: number;
@@ -106,13 +107,17 @@ function simulateOne(
   let homeGoals = 0;
   let awayGoals = 0;
 
-  for (let minute = 1; minute <= 90; minute += 1) {
+  // 6 × 15-minute blocks ≈ same expected goals as a 90' loop, ~15× less work
+  const BLOCK = 15;
+  for (let block = 0; block < 6; block += 1) {
+    const minute = block * BLOCK + 8;
     const late = minute >= 75 ? 0.92 : minute >= 60 ? 0.97 : 1;
     const homeFatigue = home.stamina * late;
     const awayFatigue = away.stamina * late;
 
     const homeChance =
       0.042 *
+      BLOCK *
       ((home.attack * 0.62 + home.midfield * 0.38) /
         Math.max(0.55, away.defence * 0.68 + away.midfield * 0.32)) *
       (1 + homeAdv) *
@@ -120,22 +125,28 @@ function simulateOne(
 
     const awayChance =
       0.038 *
+      BLOCK *
       ((away.attack * 0.62 + away.midfield * 0.38) /
         Math.max(0.55, home.defence * 0.68 + home.midfield * 0.32)) *
       awayFatigue;
 
-    if (rng() < homeChance) {
+    // Allow multi-goal blocks via small poisson-like repeats
+    let hc = homeChance;
+    while (hc > 0.0001 && rng() < Math.min(0.85, hc)) {
       const convert =
         0.29 *
         (home.attack / Math.max(0.55, away.gk * 0.5 + away.defence * 0.5));
       if (rng() < Math.min(0.58, convert)) homeGoals += 1;
+      hc *= 0.35;
     }
 
-    if (rng() < awayChance) {
+    let ac = awayChance;
+    while (ac > 0.0001 && rng() < Math.min(0.85, ac)) {
       const convert =
         0.27 *
         (away.attack / Math.max(0.55, home.gk * 0.5 + home.defence * 0.5));
       if (rng() < Math.min(0.55, convert)) awayGoals += 1;
+      ac *= 0.35;
     }
   }
 
@@ -145,7 +156,7 @@ function simulateOne(
 export function runMatchSimulations(
   match: MatchDetail,
   features: PredictFeatures,
-  iterations = 20000,
+  iterations = DEFAULT_SIM_ITERATIONS,
 ): SimulationResult {
   const homeUnits = rateSideUnits(match, "home", features);
   const awayUnits = rateSideUnits(match, "away", features);

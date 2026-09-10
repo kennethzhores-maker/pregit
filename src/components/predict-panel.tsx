@@ -117,7 +117,7 @@ export function PredictPanel({
             Prediction
           </h2>
           <p className="mt-2 max-w-xl text-sm text-[var(--muted)]">
-            Ensemble of poisson + XI Monte Carlo (20k–25k runs) with history
+            Ensemble of poisson + XI Monte Carlo (2.5k–8k runs) with history
             calibration. Near kickoff we refresh official XIs when published.
           </p>
           {usage ? (

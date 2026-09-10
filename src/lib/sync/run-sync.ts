@@ -11,7 +11,17 @@ import {
   TEAMS,
   TEAM_STATS,
 } from "@/lib/data/seed";
+import { getFootballDataToken } from "@/lib/football/football-data-client";
+import {
+  footballSeasonCandidates,
+  getConfiguredFootballSeason,
+  isSeasonPlanError,
+} from "@/lib/football/season";
 import { createServiceClient } from "@/lib/supabase/admin";
+import {
+  syncFixturesFromFootballData,
+  syncStandingsFromFootballData,
+} from "@/lib/sync/sync-football-data";
 import {
   recordSquadSync,
   syncPremierLeagueSquads,
@@ -25,7 +35,7 @@ export type SyncResult = {
   status: "success" | "failed" | "skipped";
   recordsUpserted: number;
   message: string;
-  source: "seed" | "api-football";
+  source: "seed" | "api-football" | "football-data";
 };
 
 async function recordSyncRun(
@@ -285,61 +295,88 @@ async function syncFromApiFootball(job: SyncJob): Promise<SyncResult> {
   }
 
   const leagueId = process.env.FOOTBALL_LEAGUE_ID ?? "39";
-  const season = process.env.FOOTBALL_SEASON ?? String(SEASON);
-  const url = new URL("https://v3.football.api-sports.io/fixtures");
-  url.searchParams.set("league", leagueId);
-  url.searchParams.set("season", season);
-
-  if (job === "hourly") {
-    const from = new Date();
-    from.setDate(from.getDate() - 1);
-    const to = new Date();
-    to.setDate(to.getDate() + 3);
-    url.searchParams.set("from", from.toISOString().slice(0, 10));
-    url.searchParams.set("to", to.toISOString().slice(0, 10));
-  }
+  const preferred = getConfiguredFootballSeason();
+  const notes: string[] = [];
+  let season = preferred;
+  let rows: ApiFootballFixture[] = [];
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        "x-apisports-key": apiKey,
-      },
-      next: { revalidate: 0 },
-    });
+    for (const candidate of footballSeasonCandidates()) {
+      const url = new URL("https://v3.football.api-sports.io/fixtures");
+      url.searchParams.set("league", leagueId);
+      url.searchParams.set("season", String(candidate));
 
-    if (!response.ok) {
-      throw new Error(`API-Football HTTP ${response.status}`);
+      if (job === "hourly") {
+        const from = new Date();
+        from.setDate(from.getDate() - 1);
+        const to = new Date();
+        to.setDate(to.getDate() + 3);
+        url.searchParams.set("from", from.toISOString().slice(0, 10));
+        url.searchParams.set("to", to.toISOString().slice(0, 10));
+      }
+
+      const response = await fetch(url, {
+        headers: {
+          "x-apisports-key": apiKey,
+        },
+        next: { revalidate: 0 },
+      });
+
+      if (!response.ok) {
+        notes.push(`Season ${candidate}: HTTP ${response.status}`);
+        continue;
+      }
+
+      const payload = (await response.json()) as {
+        response?: ApiFootballFixture[];
+        errors?: unknown;
+      };
+
+      if (isSeasonPlanError(payload.errors)) {
+        notes.push(`Season ${candidate} blocked by free API plan.`);
+        continue;
+      }
+
+      const apiErrors = payload.errors;
+      const hasApiError =
+        apiErrors != null &&
+        (Array.isArray(apiErrors)
+          ? apiErrors.length > 0
+          : typeof apiErrors === "object" && Object.keys(apiErrors).length > 0);
+
+      if (hasApiError) {
+        notes.push(
+          `Season ${candidate}: ${
+            typeof apiErrors === "object"
+              ? JSON.stringify(apiErrors)
+              : String(apiErrors)
+          }`,
+        );
+        continue;
+      }
+
+      rows = payload.response ?? [];
+      season = candidate;
+      if (candidate !== preferred) {
+        notes.push(
+          `Preferred season ${preferred} unavailable; synced fixtures for ${candidate}.`,
+        );
+      }
+      break;
     }
 
-    const payload = (await response.json()) as {
-      response?: ApiFootballFixture[];
-      errors?: unknown;
-    };
-
-    const apiErrors = payload.errors;
-    const hasApiError =
-      apiErrors != null &&
-      (Array.isArray(apiErrors)
-        ? apiErrors.length > 0
-        : typeof apiErrors === "object" && Object.keys(apiErrors).length > 0);
-
-    if (hasApiError) {
-      const message =
-        typeof apiErrors === "object"
-          ? JSON.stringify(apiErrors)
-          : String(apiErrors);
+    if (!rows.length && notes.some((n) => /blocked|rejected|HTTP/i.test(n))) {
       const result: SyncResult = {
         job,
         status: "failed",
         recordsUpserted: 0,
-        message: `API-Football rejected the request: ${message}`,
+        message: `API-Football fixture sync failed. ${notes.join(" ")}`,
         source: "api-football",
       };
       await recordSyncRun(supabase, job, result);
       return result;
     }
 
-    const rows = payload.response ?? [];
     let records = 0;
 
     // Ensure competition exists
@@ -397,7 +434,9 @@ async function syncFromApiFootball(job: SyncJob): Promise<SyncResult> {
       job,
       status: "success",
       recordsUpserted: records,
-      message: `Synced ${rows.length} fixtures from API-Football.`,
+      message: `Synced ${rows.length} fixtures from API-Football (season ${season}).${
+        notes.length ? ` ${notes.join(" ")}` : ""
+      }`,
       source: "api-football",
     };
     await recordSyncRun(supabase, job, result);
@@ -422,26 +461,77 @@ export async function runSync(job: SyncJob = "hourly"): Promise<SyncResult> {
 
   if (job === "squads") {
     const supabase = createServiceClient();
-    const teamStats = await syncPremierLeagueTeamStats();
+    const hasFd = Boolean(getFootballDataToken());
+
+    let standingsStatus: "success" | "failed" | "skipped" = "skipped";
+    let standingsCount = 0;
+    let standingsMessage = "Standings not synced.";
+
+    if (hasFd) {
+      const fd = await syncStandingsFromFootballData();
+      standingsStatus = fd.status;
+      standingsCount = fd.recordsUpserted;
+      standingsMessage = fd.message;
+      if (fd.status !== "success") {
+        const api = await syncPremierLeagueTeamStats();
+        standingsStatus = api.status;
+        standingsCount = api.teams;
+        standingsMessage = `${fd.message} API-Football fallback: ${api.message}`;
+      }
+    } else {
+      const api = await syncPremierLeagueTeamStats();
+      standingsStatus = api.status;
+      standingsCount = api.teams;
+      standingsMessage = api.message;
+    }
+
     const squadResult = await syncPremierLeagueSquads();
     if (supabase) {
       await recordSquadSync(supabase, {
         ...squadResult,
-        message: `${teamStats.message} ${squadResult.message}`,
+        message: `${standingsMessage} ${squadResult.message}`,
       });
     }
+
     return {
       job: "squads",
       status:
-        squadResult.status === "failed" || teamStats.status === "failed"
+        squadResult.status === "failed" || standingsStatus === "failed"
           ? "failed"
-          : squadResult.status === "skipped" && teamStats.status === "skipped"
+          : squadResult.status === "skipped" && standingsStatus === "skipped"
             ? "skipped"
             : "success",
       recordsUpserted:
-        squadResult.players + squadResult.stats + teamStats.teams,
-      message: `${teamStats.message} ${squadResult.message}`,
-      source: "api-football",
+        squadResult.players + squadResult.stats + standingsCount,
+      message: `${standingsMessage} ${squadResult.message}`,
+      source: hasFd ? "football-data" : "api-football",
+    };
+  }
+
+  // Fixtures: prefer free football-data.org for the configured (live) season
+  if (getFootballDataToken()) {
+    const mode = job === "nightly" ? "nightly" : "hourly";
+    const fd = await syncFixturesFromFootballData(mode);
+    if (fd.status === "success") {
+      const standings = await syncStandingsFromFootballData();
+      const supabase = createServiceClient();
+      const result: SyncResult = {
+        job,
+        status: "success",
+        recordsUpserted: fd.recordsUpserted + standings.recordsUpserted,
+        message: `${fd.message} ${standings.message}`,
+        source: "football-data",
+      };
+      if (supabase) {
+        await recordSyncRun(supabase, job, result);
+      }
+      return result;
+    }
+
+    const api = await syncFromApiFootball(job);
+    return {
+      ...api,
+      message: `football-data.org failed (${fd.message}). ${api.message}`,
     };
   }
 

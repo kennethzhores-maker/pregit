@@ -4,13 +4,15 @@ import { getSeedMatchDetail, listSeedFixtures } from "@/lib/data/seed";
 import {
   applyRefreshOverlay,
 } from "@/lib/sync/pre-kickoff";
+import { getConfiguredFootballSeason } from "@/lib/football/season";
+import { resolveTeamStatsForPredict } from "@/lib/football/team-strength-priors";
 import type {
   FixtureListItem,
   FixtureStatus,
   MatchDetail,
   PlayerPosition,
 } from "@/lib/data/types";
-import { parseForm, resolveLineupStatus } from "@/lib/data/types";
+import { resolveLineupStatus } from "@/lib/data/types";
 
 type TeamRow = {
   id: string;
@@ -32,22 +34,17 @@ type TeamStatsRow = {
   season: number;
 };
 
-function mapTeamStats(row: TeamStatsRow | undefined, teamId: string) {
-  if (!row) return null;
-  const form = parseForm(row.form);
-  return {
-    teamId,
-    season: row.season,
-    played: row.played,
-    wins: row.wins,
-    draws: row.draws,
-    losses: row.losses,
-    goalsFor: row.goals_for,
-    goalsAgainst: row.goals_against,
-    form,
-    homeForm: parseForm(row.home_form).length ? parseForm(row.home_form) : form,
-    awayForm: parseForm(row.away_form).length ? parseForm(row.away_form) : form,
-  };
+function pickStatsMap(
+  rows: TeamStatsRow[] | null | undefined,
+  teamIds: string[],
+  preferredSeason: number,
+) {
+  const list = rows ?? [];
+  const map = new Map<string, ReturnType<typeof resolveTeamStatsForPredict>>();
+  for (const teamId of teamIds) {
+    map.set(teamId, resolveTeamStatsForPredict(teamId, list, preferredSeason));
+  }
+  return map;
 }
 
 export async function listFixtures(): Promise<{
@@ -55,25 +52,20 @@ export async function listFixtures(): Promise<{
   source: "supabase" | "seed";
 }> {
   if (!canUseSupabaseData()) {
-    const fixtures = listSeedFixtures().map((fixture) => {
-      const refreshed = applyRefreshOverlay({
-        ...getSeedMatchDetail(fixture.id)!,
-      });
-      return {
-        ...fixture,
-        status: refreshed.status,
-        lineupStatus: refreshed.lineupStatus,
-        home: refreshed.home,
-        away: refreshed.away,
-      };
-    });
-    return { fixtures, source: "seed" };
+    return { fixtures: listSeedFixtures(), source: "seed" };
   }
 
   const supabase = await createClient();
   if (!supabase) {
     return { fixtures: listSeedFixtures(), source: "seed" };
   }
+
+  // Prefer fixtures from the current matchboard window (recent + upcoming),
+  // not the whole season from August — that resurrects stale demo rows.
+  const from = new Date();
+  from.setDate(from.getDate() - 21);
+  const to = new Date();
+  to.setDate(to.getDate() + 45);
 
   const { data: fixtures, error } = await supabase
     .from("fixtures")
@@ -90,10 +82,23 @@ export async function listFixtures(): Promise<{
       away:teams!fixtures_away_team_id_fkey(id, name, short_name)
     `,
     )
+    .gte("kickoff", from.toISOString())
+    .lte("kickoff", to.toISOString())
     .order("kickoff", { ascending: true });
 
   if (error || !fixtures?.length) {
     return { fixtures: listSeedFixtures(), source: "seed" };
+  }
+
+  return mapFixtureList(fixtures);
+}
+
+async function mapFixtureList(
+  fixtures: Array<Record<string, unknown>>,
+): Promise<{ fixtures: FixtureListItem[]; source: "supabase" }> {
+  const supabase = await createClient();
+  if (!supabase) {
+    return { fixtures: [], source: "supabase" };
   }
 
   const teamIds = Array.from(
@@ -118,8 +123,11 @@ export async function listFixtures(): Promise<{
       .in("fixture_id", fixtureIds),
   ]);
 
-  const statsByTeam = new Map<string, TeamStatsRow>(
-    (stats as TeamStatsRow[] | null)?.map((row) => [row.team_id, row]) ?? [],
+  const preferredSeason = getConfiguredFootballSeason();
+  const statsByTeam = pickStatsMap(
+    stats as TeamStatsRow[] | null,
+    teamIds,
+    preferredSeason,
   );
 
   const mapped: FixtureListItem[] = fixtures.map((fixture) => {
@@ -140,25 +148,25 @@ export async function listFixtures(): Promise<{
     const awayCount = related.filter((row) => row.team_id === away.id).length;
 
     return {
-      id: fixture.id,
+      id: fixture.id as string,
       competition: (competition as { name: string } | null)?.name ?? "League",
-      kickoff: fixture.kickoff,
-      venue: fixture.venue ?? "",
+      kickoff: fixture.kickoff as string,
+      venue: (fixture.venue as string | null) ?? "",
       status: fixture.status as FixtureStatus,
       home: {
         id: home.id,
         name: home.name,
         shortName: home.short_name,
-        form: parseForm(statsByTeam.get(home.id)?.form),
+        form: statsByTeam.get(home.id)?.stats.form ?? [],
       },
       away: {
         id: away.id,
         name: away.name,
         shortName: away.short_name,
-        form: parseForm(statsByTeam.get(away.id)?.form),
+        form: statsByTeam.get(away.id)?.stats.form ?? [],
       },
-      homeScore: fixture.home_score,
-      awayScore: fixture.away_score,
+      homeScore: fixture.home_score as number | null,
+      awayScore: fixture.away_score as number | null,
       lineupStatus: resolveLineupStatus(
         fixture.status as FixtureStatus,
         homeCount,
@@ -281,12 +289,30 @@ export async function getMatchDetail(
   ]);
 
   const playerIds = (lineupRows ?? []).map((row) => row.player_id as string);
+  const preferredSeason = getConfiguredFootballSeason();
   const { data: playerStats } = playerIds.length
-    ? await supabase.from("player_stats").select("*").in("player_id", playerIds)
+    ? await supabase
+        .from("player_stats")
+        .select("*")
+        .in("player_id", playerIds)
+        .eq("season", preferredSeason)
     : { data: [] as Array<Record<string, unknown>> };
 
+  // If current season has no player rows yet, fall back to any season
+  const playerStatsResolved =
+    playerStats && playerStats.length
+      ? playerStats
+      : playerIds.length
+        ? (
+            await supabase
+              .from("player_stats")
+              .select("*")
+              .in("player_id", playerIds)
+          ).data
+        : [];
+
   const statsByPlayer = new Map(
-    (playerStats ?? []).map((row) => [row.player_id as string, row]),
+    (playerStatsResolved ?? []).map((row) => [row.player_id as string, row]),
   );
 
   const mapLineup = (teamId: string) =>
@@ -308,13 +334,16 @@ export async function getMatchDetail(
         };
       });
 
-  const statsByTeam = new Map(
-    (teamStats as TeamStatsRow[] | null)?.map((row) => [row.team_id, row]) ??
-      [],
+  const resolvedStats = pickStatsMap(
+    teamStats as TeamStatsRow[] | null,
+    [fixture.home_team_id, fixture.away_team_id],
+    preferredSeason,
   );
 
   const homeLineup = mapLineup(fixture.home_team_id);
   const awayLineup = mapLineup(fixture.away_team_id);
+  const homeResolved = resolvedStats.get(fixture.home_team_id)!;
+  const awayResolved = resolvedStats.get(fixture.away_team_id)!;
 
   const detail: MatchDetail = {
     id: fixture.id,
@@ -326,13 +355,13 @@ export async function getMatchDetail(
       id: home.id,
       name: home.name,
       shortName: home.short_name,
-      form: parseForm(statsByTeam.get(home.id)?.form),
+      form: homeResolved.stats.form,
     },
     away: {
       id: away.id,
       name: away.name,
       shortName: away.short_name,
-      form: parseForm(statsByTeam.get(away.id)?.form),
+      form: awayResolved.stats.form,
     },
     homeScore: fixture.home_score,
     awayScore: fixture.away_score,
@@ -352,14 +381,8 @@ export async function getMatchDetail(
         isActive: row.is_active,
       };
     }),
-    homeStats: mapTeamStats(
-      statsByTeam.get(fixture.home_team_id),
-      fixture.home_team_id,
-    ),
-    awayStats: mapTeamStats(
-      statsByTeam.get(fixture.away_team_id),
-      fixture.away_team_id,
-    ),
+    homeStats: homeResolved.stats,
+    awayStats: awayResolved.stats,
     headToHead: (h2hRows ?? [])
       .filter((row) => row.home_score != null && row.away_score != null)
       .map((row) => {

@@ -6,12 +6,14 @@ import "./globals.css";
 const body = DM_Sans({
   variable: "--font-body",
   subsets: ["latin"],
+  display: "swap",
 });
 
 const display = Bebas_Neue({
   variable: "--font-display",
   weight: "400",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {

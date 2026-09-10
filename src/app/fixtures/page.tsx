@@ -3,10 +3,13 @@ import { redirect } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
 import { FixtureRow } from "@/components/fixture-row";
 import { listFixtures } from "@/lib/data/repository";
+import type { FixtureListItem } from "@/lib/data/types";
 import { getFollowedTeamIds } from "@/lib/product/follows";
 import { getCurrentUser } from "@/lib/supabase/server";
 
 const RECENT_RESULTS_LIMIT = 12;
+const RECENT_RESULTS_MAX_AGE_DAYS = 21;
+const UPCOMING_HORIZON_DAYS = 45;
 
 function byKickoffAsc(
   a: { kickoff: string },
@@ -22,11 +25,41 @@ function byKickoffDesc(
   return new Date(b.kickoff).getTime() - new Date(a.kickoff).getTime();
 }
 
+function hoursUntilKickoff(kickoffIso: string, now = Date.now()) {
+  return (new Date(kickoffIso).getTime() - now) / (1000 * 60 * 60);
+}
+
+/** Drop stale demo "live/lineups" rows (e.g. August fixtures still marked live). */
+function sanitizeFixture(fixture: FixtureListItem): FixtureListItem {
+  const hours = hoursUntilKickoff(fixture.kickoff);
+  if (
+    (fixture.status === "live" || fixture.status === "lineups") &&
+    hours < -6
+  ) {
+    return {
+      ...fixture,
+      status: "finished",
+      lineupStatus: "unavailable",
+    };
+  }
+  return fixture;
+}
+
+function inBoardWindow(fixture: FixtureListItem, now = Date.now()) {
+  const hours = hoursUntilKickoff(fixture.kickoff, now);
+  const days = hours / 24;
+  if (fixture.status === "finished") {
+    return days >= -RECENT_RESULTS_MAX_AGE_DAYS;
+  }
+  return days >= -0.5 && days <= UPCOMING_HORIZON_DAYS;
+}
+
 export default async function FixturesPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { fixtures, source } = await listFixtures();
+  const { fixtures: rawFixtures, source } = await listFixtures();
+  const fixtures = rawFixtures.map(sanitizeFixture).filter(inBoardWindow);
   const followedTeamIds = await getFollowedTeamIds(user.id);
   const followedSet = new Set(followedTeamIds);
 
@@ -44,14 +77,18 @@ export default async function FixturesPage() {
   const followedIds = new Set(followedOpen.map((f) => f.id));
 
   const intelligenceReady = fixtures
-    .filter(
-      (f) =>
-        !followedIds.has(f.id) &&
-        (f.status === "live" ||
-          f.status === "lineups" ||
-          f.lineupStatus === "confirmed" ||
-          f.lineupStatus === "provisional"),
-    )
+    .filter((f) => {
+      if (followedIds.has(f.id)) return false;
+      const hours = hoursUntilKickoff(f.kickoff);
+      // Only near-kickoff matches belong in this section
+      if (hours < -4 || hours > 48) return false;
+      return (
+        f.status === "live" ||
+        f.status === "lineups" ||
+        f.lineupStatus === "confirmed" ||
+        f.lineupStatus === "provisional"
+      );
+    })
     .sort(byKickoffAsc);
 
   const intelligenceIds = new Set(intelligenceReady.map((f) => f.id));
@@ -60,6 +97,7 @@ export default async function FixturesPage() {
     .filter(
       (f) =>
         f.status === "scheduled" &&
+        hoursUntilKickoff(f.kickoff) >= -0.5 &&
         !intelligenceIds.has(f.id) &&
         !followedIds.has(f.id),
     )
@@ -98,11 +136,21 @@ export default async function FixturesPage() {
 
         {!hasOpenMatches ? (
           <div className="mb-8 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/5 px-4 py-4 text-sm text-[var(--muted)]">
-            No upcoming fixtures on the free football API season (2024/25 is
-            finished). Showing recent results below — you can still open a match
-            and run Predict on historical games. Upgrade API-Football to Pro and
-            set <code className="text-[var(--foreground)]">FOOTBALL_SEASON=2026</code>{" "}
-            for live matchweeks.
+            No upcoming fixtures in the database yet. Add a free{" "}
+            <code className="text-[var(--foreground)]">FOOTBALL_DATA_TOKEN</code>{" "}
+            from{" "}
+            <a
+              className="text-[var(--foreground)] underline"
+              href="https://www.football-data.org/client/register"
+              target="_blank"
+              rel="noreferrer"
+            >
+              football-data.org
+            </a>
+            , keep{" "}
+            <code className="text-[var(--foreground)]">FOOTBALL_SEASON=2026</code>,
+            then run <code className="text-[var(--foreground)]">npm run db:sync</code>{" "}
+            (or nightly) for live 2026/27 matchweeks and standings.
           </div>
         ) : null}
 
@@ -116,7 +164,7 @@ export default async function FixturesPage() {
                 <FixtureRow
                   key={fixture.id}
                   fixture={fixture}
-                  followedTeamIds={followedTeamIds}
+                  followedTeamIds={followedSet}
                 />
               ))}
             </div>
@@ -137,7 +185,7 @@ export default async function FixturesPage() {
                 <FixtureRow
                   key={fixture.id}
                   fixture={fixture}
-                  followedTeamIds={followedTeamIds}
+                  followedTeamIds={followedSet}
                 />
               ))}
             </div>
@@ -154,7 +202,7 @@ export default async function FixturesPage() {
                 <FixtureRow
                   key={fixture.id}
                   fixture={fixture}
-                  followedTeamIds={followedTeamIds}
+                  followedTeamIds={followedSet}
                 />
               ))}
             </div>
@@ -174,7 +222,7 @@ export default async function FixturesPage() {
                 <FixtureRow
                   key={fixture.id}
                   fixture={fixture}
-                  followedTeamIds={followedTeamIds}
+                  followedTeamIds={followedSet}
                 />
               ))}
             </div>
